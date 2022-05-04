@@ -1,0 +1,205 @@
+---
+title: "NOAA Storm Database"
+output: html_notebook
+author: Andrew Domenico
+---
+
+**Reproducible Research - Peer Graded Assignment 2**
+
+## Synopsys
+The basic goal of this assignment is to explore the NOAA Storm Database and answer some basic questions about severe weather events. <Fill in more info here>
+
+## Data Processing 
+Begin by setting options and importing libraries
+
+```{r include = FALSE}
+knitr::opts_chunk$set(echo=TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(readr)
+library(lubridate)
+```
+
+This project involves exploring the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database. This database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage.
+
+The data is available from a public S3 bucket on AWS.  We will create a data directory within the project and store the data there for further use.
+```{r}
+if(!dir.exists("./data")) {
+  dir.create("./data")
+} else {
+  print("Data directory already exists")
+}
+```
+
+```{r}
+#download the data, make note of the URL and time downloaded
+fileUrl <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+dest <- "./data/StormData.csv.bz2"
+download.file(fileUrl, dest)
+print(paste0('Data retrieved from ', fileUrl, ' at ', Sys.time()))
+```
+The data from the .csv file can now be read into a data frame.  This is raw data
+and will be explored.  We expect to transform the data throughout the analysis.
+```{r}
+#unzip the file and read to a dataframe
+raw_df <- read.csv(dest)
+```
+
+Conduct initial, exploratory analysis of the Storm Data
+```{r}
+summary(raw_df)
+colnames(raw_df)
+```
+
+Convert the Begin and End dates from character to date format, and create a year
+column
+```{r}
+raw_df$BGN_DATE <- lubridate::mdy_hms(raw_df$BGN_DATE)
+raw_df$END_DATE <- lubridate::mdy_hms(raw_df$END_DATE)
+raw_df$year <- format(raw_df$BGN_DATE, format="%Y")
+```
+
+
+
+
+
+## Results
+This analysis will address the following questions:
+
+## Question 1
+Across the United States, which types of events (as indicated in the \color{red}{\verb|EVTYPE|}EVTYPE variable) are most harmful with respect to population health?
+
+Population health is measured in the columns 'FATALITIES' and 'INJURIES'. We will
+need to group the event types together
+
+```{r}
+health_df <- raw_df %>%
+  mutate(raw_df, event_type = 
+          case_when(grepl("FLOOD", EVTYPE) ~ "FLOOD",
+                    grepl("HURRICANE", EVTYPE) ~ "HURRICANE",
+                    grepl("WIND", EVTYPE) ~ "WIND",
+                    grepl("ICE", EVTYPE) ~ "ICE",
+                    grepl("THUNDERSTORM", EVTYPE) ~ "THUNDERSTORM",
+                    grepl("FIRE", EVTYPE) ~ "FIRE",
+                    grepl("TORNADO", EVTYPE) ~ "TORNADO",
+                    TRUE ~ "OTHER")) %>%
+  group_by(event_type, year) %>%
+  summarize(total_fatalities = sum(FATALITIES), total_injuries=sum(INJURIES),
+            total_impacted_ppl = total_fatalities+total_injuries) %>%
+  filter(year >= 1992)
+```
+
+We can now create a basic graph showing the number of injuries and fatalities by
+event type
+
+```{r}
+ggplot(health_df, aes(x=year, y=total_fatalities, fill=event_type)) +
+  geom_bar(position="stack", stat="identity") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+```
+
+In 2011, Tornados were the event type that caused the most fatalities and injuries.
+The 'Other' category has a persistent level of harm, and represents all other categories besides those listed in the legend.
+
+## Question 2
+
+Across the United States, which types of events have the greatest economic consequences?  Let's examine the types of events by the amount of property and crop damage caused.  
+
+We want to convert the damage estimates from decimals to dollars.  First, 
+examine the possible values for the field PROPDMGEXP, which is used to multiply 
+the values in PROPDMG and CROPDMG. 
+```{r}
+unique(raw_df$PROPDMGEXP)
+unique(raw_df$CROPDMGEXP)
+```
+
+Since there are values in PROPDMGEXP that are not valid for multiplication, we
+will filter out all rows where invalid values take place
+```{r}
+filtered_df <- raw_df %>%
+  filter(PROPDMGEXP == "K" | PROPDMGEXP == "M" | PROPDMGEXP == "m" | 
+           PROPDMGEXP == "B" | PROPDMGEXP == "" | CROPDMGEXP == "K" | 
+           CROPDMGEXP == "M" | CROPDMGEXP == "m" | CROPDMGEXP == "B" | 
+           CROPDMGEXP == "k" | CROPDMGEXP == "")
+```
+
+Now, replace those letter values with the actual multiplier, and create a new 
+column with the total property damage
+```{r}
+filtered_df <-
+  mutate(filtered_df, multiplier = case_when(PROPDMGEXP == "K" ~ as.numeric(1000),
+                                PROPDMGEXP == "M" ~ as.numeric(1000000),
+                                PROPDMGEXP == "m" ~ as.numeric(1000000),
+                                PROPDMGEXP == "B" ~ as.numeric(1000000000),
+                                PROPDMGEXP == "" ~ as.numeric(1),
+                                CROPDMGEXP == "K" ~ as.numeric(1000),
+                                CROPDMGEXP == "M" ~ as.numeric(1000000),
+                                CROPDMGEXP == "m" ~ as.numeric(1000000),
+                                CROPDMGEXP == "B" ~ as.numeric(1000000000),
+                                CROPDMGEXP == "k" ~ as.numeric(1000),
+                                CROPDMGEXP == "" ~ as.numeric(1)
+                                ))
+```
+
+Multiply the PROPDMG and the CROPDMG by the newly created multiplier and we have 
+the numbers for both property & crop damages.  Those damages summed equal total
+damage in dollar figures
+```{r}
+filtered_df <- filtered_df %>%
+  mutate(property_damage = PROPDMG * multiplier) %>%
+  mutate(crop_damage = CROPDMG * multiplier) %>%
+  mutate(total_damages = property_damage + crop_damage)
+```
+
+For each year, we would like to know the total amounts of both property and crop
+damage caused.  Since there are many variations on the event types, we can group
+some of them.  For example, flash floods are types of floods, wildfires are types
+of fires, etc.
+```{r}
+economic_damage <- filtered_df %>%
+  mutate(filtered_df, event_type = 
+          case_when(grepl("FLOOD", EVTYPE) ~ "FLOOD",
+                    grepl("HURRICANE", EVTYPE) ~ "HURRICANE",
+                    grepl("WIND", EVTYPE) ~ "WIND",
+                    grepl("ICE", EVTYPE) ~ "ICE",
+                    grepl("THUNDERSTORM", EVTYPE) ~ "THUNDERSTORM",
+                    grepl("FIRE", EVTYPE) ~ "FIRE",
+                    grepl("TORNADO", EVTYPE) ~ "TORNADO",
+                    TRUE ~ "OTHER")) %>%
+  group_by(year, event_type) %>%
+  summarize(prop_dmg = sum(property_damage),
+            crop_dmg = sum(crop_damage),
+            total_dmg = sum(property_damage + crop_damage))
+```
+
+
+
+Now we can create some exploratory graphics which show the total damage by event 
+type
+```{r}
+ggplot(economic_damage, aes(x=year, y=total_dmg, fill=event_type)) +
+  geom_bar(position="stack", stat="identity") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+```
+
+The data before 1993 is very sparse and not much damage is reported. In order to
+obtain the most relevant results, we will remove all years 1992 and before
+```{r}
+economic_damage <- economic_damage %>%
+  filter(year >= 1992)
+```
+
+Additionally, the bar plot is a bit hard to read.  A boxplot should be easier to 
+compare values
+```{r}
+ggplot(economic_damage, aes(x=event_type, y=total_dmg)) +
+  geom_boxplot() + 
+  geom_jitter(color="black", size=0.4, alpha=0.9)
+```
+Clearly, Hurricanes are the most damaging severe weather event, even though there
+are few outlier events that dramatically push the total upwards. They are followed 
+by floods which can be co-occuring with hurricanes.
+
